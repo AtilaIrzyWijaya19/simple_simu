@@ -1,6 +1,5 @@
-name: simu_app
+name: simu
 description: SiMu - Sistem Keuangan Mahasiswa
-
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -10,12 +9,19 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Firebase
+  firebase_core: ^3.1.0
+  firebase_auth: ^5.1.0
+  cloud_firestore: ^5.1.0
+  # Shared Preferences untuk auto-login cache
+  shared_preferences: ^2.2.3
+  # Intl untuk format tanggal
   intl: ^0.19.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true

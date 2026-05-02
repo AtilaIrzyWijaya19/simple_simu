@@ -1,7 +1,7 @@
 // lib/screens/register_screen.dart
 import 'package:flutter/material.dart';
-import '../models/app_data.dart';
-import 'dashboard_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_service.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -17,55 +17,68 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _konfPassCtrl = TextEditingController();
   bool _showPass = false;
   bool _showKonfPass = false;
+  bool _isLoading = false;
   String? _errorMsg;
 
-  void _register() {
+  @override
+  void dispose() {
+    _namaCtrl.dispose();
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    _konfPassCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _register() async {
     final nama = _namaCtrl.text.trim();
     final email = _emailCtrl.text.trim();
     final pass = _passCtrl.text.trim();
     final konfPass = _konfPassCtrl.text.trim();
 
     if (nama.isEmpty || email.isEmpty || pass.isEmpty || konfPass.isEmpty) {
-      setState(() => _errorMsg = 'Semua field wajib diisi!');
+      setState(() => _errorMsg = 'Semua field wajib diisi.');
       return;
     }
-
     if (!email.contains('@')) {
-      setState(() => _errorMsg = 'Format email tidak valid!');
+      setState(() => _errorMsg = 'Format email tidak valid.');
       return;
     }
-
-    if (pass != konfPass) {
-      setState(() => _errorMsg = 'Password tidak cocok!');
-      return;
-    }
-
     if (pass.length < 6) {
-      setState(() => _errorMsg = 'Password minimal 6 karakter!');
+      setState(() => _errorMsg = 'Password minimal 6 karakter.');
+      return;
+    }
+    if (pass != konfPass) {
+      setState(() => _errorMsg = 'Konfirmasi password tidak cocok.');
       return;
     }
 
-    // Cek email sudah terdaftar
-    final sudahAda = AppData.daftarUser.any((u) => u.email == email);
-    if (sudahAda) {
-      setState(() => _errorMsg = 'Email sudah terdaftar!');
-      return;
+    setState(() {
+      _isLoading = true;
+      _errorMsg = null;
+    });
+
+    try {
+      await FirebaseService.register(nama, email, pass);
+      // AuthGate akan otomatis mendeteksi dan arahkan ke Dashboard
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        switch (e.code) {
+          case 'email-already-in-use':
+            _errorMsg = 'Email sudah terdaftar. Silakan masuk.';
+            break;
+          case 'invalid-email':
+            _errorMsg = 'Format email tidak valid.';
+            break;
+          case 'weak-password':
+            _errorMsg = 'Password terlalu lemah.';
+            break;
+          default:
+            _errorMsg = 'Pendaftaran gagal. Periksa koneksi internet.';
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-
-    // Daftarkan user baru
-    AppData.daftarUser.add(UserModel(nama: nama, email: email, password: pass));
-
-    // Langsung login
-    AppData.namaUser = nama;
-    AppData.emailUser = email;
-    AppData.isLoggedIn = true;
-    AppData.initDefaultData();
-
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const DashboardScreen()),
-      (route) => false,
-    );
   }
 
   @override
@@ -86,15 +99,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Buat Akun Baru',
-                  style:
-                      TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
+              const Text(
+                'Buat Akun Baru',
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 6),
-              const Text('Isi data diri kamu dengan benar',
-                  style: TextStyle(color: Colors.grey)),
+              const Text(
+                'Isi data diri dengan benar',
+                style: TextStyle(color: Colors.grey),
+              ),
               const SizedBox(height: 28),
-
-              // Error
               if (_errorMsg != null)
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -116,16 +130,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ],
                   ),
                 ),
-
               _buildLabel('Nama Lengkap'),
               _buildTextField(
                 controller: _namaCtrl,
-                hint: 'Nama lengkap kamu',
+                hint: 'Nama lengkap',
                 icon: Icons.person_outline,
                 onChanged: (_) => setState(() => _errorMsg = null),
               ),
               const SizedBox(height: 16),
-
               _buildLabel('Email'),
               _buildTextField(
                 controller: _emailCtrl,
@@ -135,7 +147,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onChanged: (_) => setState(() => _errorMsg = null),
               ),
               const SizedBox(height: 16),
-
               _buildLabel('Password'),
               _buildPassField(
                 controller: _passCtrl,
@@ -145,23 +156,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onChanged: (_) => setState(() => _errorMsg = null),
               ),
               const SizedBox(height: 16),
-
               _buildLabel('Konfirmasi Password'),
               _buildPassField(
                 controller: _konfPassCtrl,
                 hint: 'Ulangi password',
                 showPass: _showKonfPass,
-                onToggle: () =>
-                    setState(() => _showKonfPass = !_showKonfPass),
+                onToggle: () => setState(() => _showKonfPass = !_showKonfPass),
                 onChanged: (_) => setState(() => _errorMsg = null),
               ),
               const SizedBox(height: 32),
-
               SizedBox(
                 width: double.infinity,
                 height: 52,
                 child: ElevatedButton(
-                  onPressed: _register,
+                  onPressed: _isLoading ? null : _register,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1A6BFF),
                     foregroundColor: Colors.white,
@@ -169,9 +177,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         borderRadius: BorderRadius.circular(14)),
                     elevation: 2,
                   ),
-                  child: const Text('Daftar',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'Daftar',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -205,8 +224,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _buildLabel(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text,
-            style: const TextStyle(
-                fontWeight: FontWeight.w600, fontSize: 14)),
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
       );
 
   Widget _buildTextField({
@@ -234,8 +252,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide:
-              const BorderSide(color: Color(0xFF1A6BFF), width: 2),
+          borderSide: const BorderSide(color: Color(0xFF1A6BFF), width: 2),
         ),
       ),
     );
@@ -254,8 +271,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       onChanged: onChanged,
       decoration: InputDecoration(
         hintText: hint,
-        prefixIcon:
-            const Icon(Icons.lock_outline, color: Color(0xFF1A6BFF)),
+        prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF1A6BFF)),
         suffixIcon: IconButton(
           icon: Icon(showPass ? Icons.visibility_off : Icons.visibility,
               color: Colors.grey),
@@ -272,8 +288,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide:
-              const BorderSide(color: Color(0xFF1A6BFF), width: 2),
+          borderSide: const BorderSide(color: Color(0xFF1A6BFF), width: 2),
         ),
       ),
     );

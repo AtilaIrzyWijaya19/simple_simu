@@ -1,7 +1,9 @@
 // lib/screens/dashboard_screen.dart
 import 'package:flutter/material.dart';
-import '../models/app_data.dart';
-import 'login_screen.dart';
+import '../services/firebase_service.dart';
+import '../models/transaksi_model.dart';
+import '../models/rekening_model.dart';
+import '../utils/app_helper.dart';
 import 'tambah_transaksi_screen.dart';
 import 'rekening_screen.dart';
 import 'recap_screen.dart';
@@ -21,47 +23,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _onNavTap(int index) {
     if (index == 2) {
-      // Tombol Tambah di tengah - buka halaman tambah transaksi
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const TambahTransaksiScreen()),
-      ).then((_) => setState(() {}));
+      _bukaFormTransaksi();
       return;
     }
     setState(() => _selectedIndex = index);
   }
 
-  void _logout() {
-    showDialog(
+  void _bukaFormTransaksi({TransaksiModel? editData}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TambahTransaksiScreen(editData: editData),
+      ),
+    );
+  }
+
+  Future<void> _logout() async {
+    final konfirmasi = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Konfirmasi Logout'),
+        title: const Text('Konfirmasi Keluar'),
         content: const Text('Kamu yakin ingin keluar dari akun?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Batal'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              AppData.logout();
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => const LoginScreen()),
-                (route) => false,
-              );
-            },
+            onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Logout'),
+            child: const Text('Keluar'),
           ),
         ],
       ),
     );
+    if (konfirmasi == true) {
+      await FirebaseService.logout();
+      // AuthGate otomatis redirect ke LoginScreen
+    }
   }
 
   Widget _buildBody() {
@@ -80,228 +83,252 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildBeranda() {
-    final pemasukan = AppData.totalPemasukan(_bulanFilter, _tahunFilter);
-    final pengeluaran = AppData.totalPengeluaran(_bulanFilter, _tahunFilter);
-    final sisa = pemasukan - pengeluaran;
+    return StreamBuilder<List<TransaksiModel>>(
+      stream: FirebaseService.streamTransaksi(),
+      builder: (context, snapTransaksi) {
+        return StreamBuilder<List<RekeningModel>>(
+          stream: FirebaseService.streamRekening(),
+          builder: (context, snapRekening) {
+            final transaksiAll = snapTransaksi.data ?? [];
+            final rekening = snapRekening.data ?? [];
 
-    final transaksiFilter = AppData.daftarTransaksi
-        .where((t) =>
-            t.tanggal.month == _bulanFilter &&
-            t.tanggal.year == _tahunFilter)
-        .toList()
-      ..sort((a, b) => b.tanggal.compareTo(a.tanggal));
+            final totalSaldo = rekening.fold(0.0, (s, r) => s + r.saldo);
 
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          // Header biru
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 52, 20, 28),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF1A6BFF), Color(0xFF0A4FCC)],
-              ),
-              borderRadius:
-                  BorderRadius.vertical(bottom: Radius.circular(28)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
+            final transaksiFilter = transaksiAll
+                .where((t) =>
+                    t.tanggal.month == _bulanFilter &&
+                    t.tanggal.year == _tahunFilter)
+                .toList()
+              ..sort((a, b) => b.tanggal.compareTo(a.tanggal));
+
+            final pemasukan = transaksiFilter
+                .where((t) => t.tipe == 'pemasukan')
+                .fold(0.0, (s, t) => s + t.jumlah);
+            final pengeluaran = transaksiFilter
+                .where((t) => t.tipe == 'pengeluaran')
+                .fold(0.0, (s, t) => s + t.jumlah);
+            final sisa = pemasukan - pengeluaran;
+
+            return SingleChildScrollView(
+              child: Column(
+                children: [
+                  // Header
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(20, 52, 20, 28),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF1A6BFF), Color(0xFF0A4FCC)],
+                      ),
+                      borderRadius:
+                          BorderRadius.vertical(bottom: Radius.circular(28)),
+                    ),
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Halo, 👋',
-                            style:
-                                TextStyle(color: Colors.white70, fontSize: 14)),
-                        Text(
-                          AppData.namaUser,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    GestureDetector(
-                      onTap: _logout,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Row(
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Icon(Icons.logout,
-                                color: Colors.white, size: 16),
-                            SizedBox(width: 4),
-                            Text('Keluar',
-                                style: TextStyle(
-                                    color: Colors.white, fontSize: 12)),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Selamat datang,',
+                                  style: TextStyle(
+                                      color: Colors.white70, fontSize: 14),
+                                ),
+                                Text(
+                                  FirebaseService.namaUser,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                            GestureDetector(
+                              onTap: _logout,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(Icons.logout,
+                                        color: Colors.white, size: 16),
+                                    SizedBox(width: 4),
+                                    Text('Keluar',
+                                        style: TextStyle(
+                                            color: Colors.white, fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                const Text('Total Saldo',
-                    style:
-                        TextStyle(color: Colors.white70, fontSize: 13)),
-                Text(
-                  AppData.formatRupiah(AppData.totalSaldo),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Filter bulan
-                GestureDetector(
-                  onTap: _pilihBulan,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.calendar_month,
-                            color: Colors.white, size: 16),
-                        const SizedBox(width: 6),
+                        const SizedBox(height: 20),
+                        const Text('Total Saldo',
+                            style:
+                                TextStyle(color: Colors.white70, fontSize: 13)),
                         Text(
-                          '${AppData.namaBulan(_bulanFilter)} $_tahunFilter',
+                          AppHelper.formatRupiah(totalSaldo),
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600),
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.keyboard_arrow_down,
-                            color: Colors.white, size: 16),
+                        const SizedBox(height: 16),
+                        GestureDetector(
+                          onTap: _pilihBulan,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.calendar_month,
+                                    color: Colors.white, size: 16),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${AppHelper.namaBulan(_bulanFilter)} $_tahunFilter',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.keyboard_arrow_down,
+                                    color: Colors.white, size: 16),
+                              ],
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
 
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Kartu ringkasan
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildRingkasanCard(
-                        'Pemasukan',
-                        AppData.formatRupiah(pemasukan),
-                        Icons.arrow_downward_rounded,
-                        const Color(0xFF00C48C),
-                        const Color(0xFFE6FFF7),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildRingkasanCard(
-                        'Pengeluaran',
-                        AppData.formatRupiah(pengeluaran),
-                        Icons.arrow_upward_rounded,
-                        Colors.redAccent,
-                        const Color(0xFFFFEEEE),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF0F5FF),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                        color: const Color(0xFF1A6BFF).withOpacity(0.2)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Sisa Bulan Ini',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 14)),
-                      Text(
-                        AppData.formatRupiah(sisa),
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: sisa >= 0
-                              ? const Color(0xFF1A6BFF)
-                              : Colors.red,
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildRingkasanCard(
+                                'Pemasukan',
+                                AppHelper.formatRupiah(pemasukan),
+                                Icons.arrow_downward_rounded,
+                                const Color(0xFF00C48C),
+                                const Color(0xFFE6FFF7),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildRingkasanCard(
+                                'Pengeluaran',
+                                AppHelper.formatRupiah(pengeluaran),
+                                Icons.arrow_upward_rounded,
+                                Colors.redAccent,
+                                const Color(0xFFFFEEEE),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0F5FF),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color:
+                                    const Color(0xFF1A6BFF).withOpacity(0.2)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Sisa Bulan Ini',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14)),
+                              Text(
+                                AppHelper.formatRupiah(sisa),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: sisa >= 0
+                                      ? const Color(0xFF1A6BFF)
+                                      : Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Transaksi Terkini',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold)),
+                            GestureDetector(
+                              onTap: () => setState(() => _selectedIndex = 3),
+                              child: const Text('Lihat Semua',
+                                  style: TextStyle(
+                                      color: Color(0xFF1A6BFF),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Tekan lama untuk edit, geser untuk hapus',
+                          style: TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
+                        const SizedBox(height: 10),
+                        if (transaksiFilter.isEmpty)
+                          Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Column(
+                                children: [
+                                  Icon(Icons.receipt_long_outlined,
+                                      size: 48, color: Colors.grey.shade300),
+                                  const SizedBox(height: 12),
+                                  const Text('Belum ada transaksi bulan ini',
+                                      style: TextStyle(color: Colors.grey)),
+                                  const SizedBox(height: 8),
+                                  const Text('Tap tombol + untuk menambahkan',
+                                      style: TextStyle(
+                                          color: Colors.grey, fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                          )
+                        else
+                          ...transaksiFilter.take(5).map(
+                                (t) => _buildTransaksiItem(
+                                    t, snapRekening.data ?? []),
+                              ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 20),
-
-                // Transaksi terkini
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Transaksi Terkini',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    GestureDetector(
-                      onTap: () => setState(() => _selectedIndex = 3),
-                      child: const Text('Lihat Semua',
-                          style: TextStyle(
-                              color: Color(0xFF1A6BFF),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                if (transaksiFilter.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        children: [
-                          Icon(Icons.receipt_long_outlined,
-                              size: 48, color: Colors.grey.shade300),
-                          const SizedBox(height: 12),
-                          const Text('Belum ada transaksi bulan ini',
-                              style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 8),
-                          const Text('Tap tombol + untuk menambahkan',
-                              style:
-                                  TextStyle(color: Colors.grey, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  ...transaksiFilter
-                      .take(5)
-                      .map((t) => _buildTransaksiItem(t)),
-              ],
-            ),
-          ),
-        ],
-      ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -328,85 +355,150 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(width: 8),
               Text(judul,
-                  style: TextStyle(
-                      color: Colors.grey.shade600, fontSize: 12)),
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
             ],
           ),
           const SizedBox(height: 8),
           Text(nilai,
               style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                  color: warna)),
+                  fontWeight: FontWeight.bold, fontSize: 15, color: warna)),
         ],
       ),
     );
   }
 
-  Widget _buildTransaksiItem(TransaksiModel t) {
+  /// Kartu transaksi dengan:
+  /// - Long press → edit
+  /// - Swipe kiri → hapus
+  Widget _buildTransaksiItem(TransaksiModel t, List<RekeningModel> rekening) {
     final isPemasukan = t.tipe == 'pemasukan';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 6,
-              offset: const Offset(0, 2))
-        ],
+
+    return Dismissible(
+      key: Key(t.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.red.shade400,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: const Icon(Icons.delete_outline, color: Colors.white, size: 28),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: isPemasukan
-                  ? const Color(0xFFE6FFF7)
-                  : const Color(0xFFFFEEEE),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              isPemasukan
-                  ? Icons.arrow_downward_rounded
-                  : Icons.arrow_upward_rounded,
-              color: isPemasukan
-                  ? const Color(0xFF00C48C)
-                  : Colors.redAccent,
-              size: 20,
-            ),
+      confirmDismiss: (_) async {
+        return await _konfirmasiHapus(t, rekening);
+      },
+      onDismissed: (_) {
+        // Sudah dihandle di confirmDismiss (batch Firestore)
+      },
+      child: GestureDetector(
+        onLongPress: () => _bukaFormTransaksi(editData: t),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2))
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(t.nama,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 14)),
-                Text(
-                  '${t.kategori} • ${AppData.formatTanggal(t.tanggal)}',
-                  style: TextStyle(
-                      color: Colors.grey.shade500, fontSize: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isPemasukan
+                      ? const Color(0xFFE6FFF7)
+                      : const Color(0xFFFFEEEE),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-              ],
-            ),
+                child: Icon(
+                  isPemasukan
+                      ? Icons.arrow_downward_rounded
+                      : Icons.arrow_upward_rounded,
+                  color:
+                      isPemasukan ? const Color(0xFF00C48C) : Colors.redAccent,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(t.nama,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 14)),
+                    Text(
+                      '${t.kategori} · ${AppHelper.formatTanggal(t.tanggal)}',
+                      style:
+                          TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                '${isPemasukan ? '+' : '-'}${AppHelper.formatRupiah(t.jumlah)}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color:
+                      isPemasukan ? const Color(0xFF00C48C) : Colors.redAccent,
+                ),
+              ),
+            ],
           ),
-          Text(
-            '${isPemasukan ? '+' : '-'}${AppData.formatRupiah(t.jumlah)}',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: isPemasukan
-                  ? const Color(0xFF00C48C)
-                  : Colors.redAccent,
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _konfirmasiHapus(
+      TransaksiModel t, List<RekeningModel> rekening) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Hapus Transaksi'),
+        content: Text('Hapus "${t.nama}"? Saldo rekening akan dikembalikan.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
             ),
+            child: const Text('Hapus'),
           ),
         ],
       ),
     );
+
+    if (ok == true) {
+      await FirebaseService.hapusTransaksi(t, rekening);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Transaksi dihapus'),
+            backgroundColor: Colors.red.shade400,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+      return true;
+    }
+    return false;
   }
 
   void _pilihBulan() {
@@ -427,23 +519,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text('Pilih Bulan & Tahun',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       IconButton(
-                        onPressed: () =>
-                            setModalState(() => tempTahun--),
+                        onPressed: () => setModalState(() => tempTahun--),
                         icon: const Icon(Icons.chevron_left),
                       ),
                       Text('$tempTahun',
                           style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                       IconButton(
-                        onPressed: () =>
-                            setModalState(() => tempTahun++),
+                        onPressed: () => setModalState(() => tempTahun++),
                         icon: const Icon(Icons.chevron_right),
                       ),
                     ],
@@ -456,8 +546,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       final b = i + 1;
                       final selected = b == tempBulan;
                       return GestureDetector(
-                        onTap: () =>
-                            setModalState(() => tempBulan = b),
+                        onTap: () => setModalState(() => tempBulan = b),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 8),
@@ -468,11 +557,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(
-                            AppData.namaBulan(b).substring(0, 3),
+                            AppHelper.namaBulan(b).substring(0, 3),
                             style: TextStyle(
-                              color: selected
-                                  ? Colors.white
-                                  : Colors.black87,
+                              color: selected ? Colors.white : Colors.black87,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -537,8 +624,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNavItem(0, Icons.home_rounded, 'Beranda'),
-              _buildNavItem(1, Icons.account_balance_wallet_rounded, 'Rekening'),
-              // Tombol Tambah di tengah, lebih besar
+              _buildNavItem(
+                  1, Icons.account_balance_wallet_rounded, 'Rekening'),
               GestureDetector(
                 onTap: () => _onNavTap(2),
                 child: Container(
@@ -573,7 +660,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildNavItem(int index, IconData icon, String label) {
-    // Index 2 is the add button, skip
     final isSelected = _selectedIndex == index;
     return GestureDetector(
       onTap: () => _onNavTap(index),
@@ -585,22 +671,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Icon(
               icon,
-              color: isSelected
-                  ? const Color(0xFF1A6BFF)
-                  : Colors.grey.shade400,
+              color:
+                  isSelected ? const Color(0xFF1A6BFF) : Colors.grey.shade400,
               size: 24,
             ),
             const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(
-                color: isSelected
-                    ? const Color(0xFF1A6BFF)
-                    : Colors.grey.shade400,
+                color:
+                    isSelected ? const Color(0xFF1A6BFF) : Colors.grey.shade400,
                 fontSize: 10,
-                fontWeight: isSelected
-                    ? FontWeight.bold
-                    : FontWeight.normal,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
           ],

@@ -1,10 +1,13 @@
 // lib/screens/tambah_transaksi_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../models/app_data.dart';
+import '../services/firebase_service.dart';
+import '../models/transaksi_model.dart';
+import '../models/rekening_model.dart';
+import '../utils/app_helper.dart';
 
 class TambahTransaksiScreen extends StatefulWidget {
-  final TransaksiModel? editData; // null = tambah baru, isi = edit
+  final TransaksiModel? editData;
 
   const TambahTransaksiScreen({super.key, this.editData});
 
@@ -18,13 +21,17 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
   final _jumlahCtrl = TextEditingController();
   final _catatanCtrl = TextEditingController();
   String? _kategori;
-  String? _rekening;
+  String? _rekeningDipilih; // namaBank
   DateTime _tanggal = DateTime.now();
   String? _errorMsg;
+  bool _isLoading = false;
+
+  List<RekeningModel> _semuaRekening = [];
 
   @override
   void initState() {
     super.initState();
+    _loadRekening();
     if (widget.editData != null) {
       final d = widget.editData!;
       _tipe = d.tipe;
@@ -32,102 +39,114 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
       _jumlahCtrl.text = d.jumlah.toStringAsFixed(0);
       _catatanCtrl.text = d.catatan;
       _kategori = d.kategori;
-      _rekening = d.rekening;
+      _rekeningDipilih = d.rekening;
       _tanggal = d.tanggal;
     }
   }
 
-  List<String> get _kategoriList => _tipe == 'pengeluaran'
-      ? AppData.kategoriPengeluaran
-      : AppData.kategoriPemasukan;
+  Future<void> _loadRekening() async {
+    final list = await FirebaseService.getRekening();
+    if (mounted) setState(() => _semuaRekening = list);
+  }
 
-  void _simpan() {
+  @override
+  void dispose() {
+    _namaCtrl.dispose();
+    _jumlahCtrl.dispose();
+    _catatanCtrl.dispose();
+    super.dispose();
+  }
+
+  List<String> get _kategoriList => _tipe == 'pengeluaran'
+      ? AppHelper.kategoriPengeluaran
+      : AppHelper.kategoriPemasukan;
+
+  Future<void> _simpan() async {
     if (_namaCtrl.text.trim().isEmpty) {
-      setState(() => _errorMsg = 'Nama transaksi wajib diisi!');
+      setState(() => _errorMsg = 'Nama transaksi wajib diisi.');
       return;
     }
     if (_jumlahCtrl.text.trim().isEmpty) {
-      setState(() => _errorMsg = 'Jumlah wajib diisi!');
+      setState(() => _errorMsg = 'Jumlah wajib diisi.');
       return;
     }
     if (_kategori == null) {
-      setState(() => _errorMsg = 'Pilih kategori terlebih dahulu!');
+      setState(() => _errorMsg = 'Pilih kategori terlebih dahulu.');
       return;
     }
-    if (_rekening == null) {
-      setState(() => _errorMsg = 'Pilih rekening terlebih dahulu!');
-      return;
-    }
-    if (AppData.daftarRekening.isEmpty) {
-      setState(() => _errorMsg = 'Belum ada rekening! Tambah rekening dulu.');
+    if (_rekeningDipilih == null) {
+      setState(() => _errorMsg = 'Pilih rekening terlebih dahulu.');
       return;
     }
 
     final jumlah = double.tryParse(_jumlahCtrl.text.replaceAll('.', '')) ?? 0;
     if (jumlah <= 0) {
-      setState(() => _errorMsg = 'Jumlah harus lebih dari 0!');
+      setState(() => _errorMsg = 'Jumlah harus lebih dari 0.');
       return;
     }
 
-    // Update saldo rekening
-    final rek = AppData.daftarRekening
-        .where((r) => r.namaBank == _rekening)
-        .firstOrNull;
+    final rek =
+        _semuaRekening.where((r) => r.namaBank == _rekeningDipilih).firstOrNull;
+    if (rek == null) {
+      setState(() => _errorMsg = 'Rekening tidak ditemukan.');
+      return;
+    }
 
-    if (rek != null) {
+    setState(() {
+      _isLoading = true;
+      _errorMsg = null;
+    });
+
+    try {
       if (widget.editData != null) {
-        // Rollback saldo lama
-        final old = widget.editData!;
-        final oldRek = AppData.daftarRekening
-            .where((r) => r.namaBank == old.rekening)
-            .firstOrNull;
-        if (oldRek != null) {
-          if (old.tipe == 'pemasukan') {
-            oldRek.saldo -= old.jumlah;
-          } else {
-            oldRek.saldo += old.jumlah;
-          }
-        }
-        // Update transaksi
-        old.nama = _namaCtrl.text.trim();
-        old.jumlah = jumlah;
-        old.tipe = _tipe;
-        old.kategori = _kategori!;
-        old.rekening = _rekening!;
-        old.catatan = _catatanCtrl.text.trim();
-        old.tanggal = _tanggal;
+        // Mode edit
+        final transaksiBaru = widget.editData!.copyWith(
+          nama: _namaCtrl.text.trim(),
+          jumlah: jumlah,
+          tipe: _tipe,
+          kategori: _kategori,
+          rekening: _rekeningDipilih,
+          catatan: _catatanCtrl.text.trim(),
+          tanggal: _tanggal,
+        );
+        // Ambil daftar rekening terbaru sebelum batch update
+        final rekTerbaru = await FirebaseService.getRekening();
+        await FirebaseService.editTransaksi(
+            widget.editData!, transaksiBaru, rekTerbaru);
       } else {
-        // Tambah baru
-        AppData.daftarTransaksi.add(TransaksiModel(
+        // Mode tambah baru
+        final transaksiModel = TransaksiModel(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
           nama: _namaCtrl.text.trim(),
           jumlah: jumlah,
           tipe: _tipe,
           kategori: _kategori!,
-          rekening: _rekening!,
+          rekening: _rekeningDipilih!,
           catatan: _catatanCtrl.text.trim(),
           tanggal: _tanggal,
-        ));
+        );
+        await FirebaseService.tambahTransaksi(transaksiModel, rek);
       }
-      // Terapkan saldo baru
-      if (_tipe == 'pemasukan') {
-        rek.saldo += jumlah;
-      } else {
-        rek.saldo -= jumlah;
-      }
-    }
 
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(widget.editData != null
-            ? 'Transaksi berhasil diperbarui!'
-            : 'Transaksi berhasil ditambahkan!'),
-        backgroundColor: const Color(0xFF00C48C),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.editData != null
+                ? 'Transaksi berhasil diperbarui.'
+                : 'Transaksi berhasil ditambahkan.'),
+            backgroundColor: const Color(0xFF00C48C),
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _errorMsg = 'Terjadi kesalahan. Coba lagi.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _pilihTanggal() async {
@@ -190,14 +209,27 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         alignment: Alignment.center,
-                        child: Text(
-                          '🔴 Pengeluaran',
-                          style: TextStyle(
-                            color: _tipe == 'pengeluaran'
-                                ? Colors.white
-                                : Colors.grey,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.arrow_upward_rounded,
+                              size: 16,
+                              color: _tipe == 'pengeluaran'
+                                  ? Colors.white
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Pengeluaran',
+                              style: TextStyle(
+                                color: _tipe == 'pengeluaran'
+                                    ? Colors.white
+                                    : Colors.grey,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -217,14 +249,27 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         alignment: Alignment.center,
-                        child: Text(
-                          '🟢 Pemasukan',
-                          style: TextStyle(
-                            color: _tipe == 'pemasukan'
-                                ? Colors.white
-                                : Colors.grey,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.arrow_downward_rounded,
+                              size: 16,
+                              color: _tipe == 'pemasukan'
+                                  ? Colors.white
+                                  : Colors.grey,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Pemasukan',
+                              style: TextStyle(
+                                color: _tipe == 'pemasukan'
+                                    ? Colors.white
+                                    : Colors.grey,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -234,7 +279,6 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Error
             if (_errorMsg != null)
               Container(
                 padding: const EdgeInsets.all(12),
@@ -244,8 +288,8 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.red.shade200),
                 ),
-                child: Text(_errorMsg!,
-                    style: const TextStyle(color: Colors.red)),
+                child:
+                    Text(_errorMsg!, style: const TextStyle(color: Colors.red)),
               ),
 
             _buildLabel('Nama Transaksi'),
@@ -284,7 +328,7 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                     const Icon(Icons.calendar_today_outlined,
                         color: Color(0xFF1A6BFF), size: 20),
                     const SizedBox(width: 12),
-                    Text(AppData.formatTanggal(_tanggal),
+                    Text(AppHelper.formatTanggal(_tanggal),
                         style: const TextStyle(fontSize: 15)),
                   ],
                 ),
@@ -304,12 +348,11 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                     _errorMsg = null;
                   }),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     decoration: BoxDecoration(
-                      color: sel
-                          ? const Color(0xFF1A6BFF)
-                          : Colors.grey.shade100,
+                      color:
+                          sel ? const Color(0xFF1A6BFF) : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -327,8 +370,8 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
             const SizedBox(height: 16),
 
             _buildLabel('Rekening'),
-            if (AppData.daftarRekening.isEmpty)
-              const Text('Belum ada rekening. Tambah rekening dulu!',
+            if (_semuaRekening.isEmpty)
+              const Text('Belum ada rekening. Tambah rekening dulu.',
                   style: TextStyle(color: Colors.red, fontSize: 13))
             else
               Container(
@@ -342,16 +385,16 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                   child: DropdownButton<String>(
                     isExpanded: true,
                     hint: const Text('Pilih Rekening'),
-                    value: _rekening,
-                    items: AppData.daftarRekening
+                    value: _rekeningDipilih,
+                    items: _semuaRekening
                         .map((r) => DropdownMenuItem(
                               value: r.namaBank,
                               child: Text(
-                                  '${r.icon} ${r.namaBank} - ${AppData.formatRupiah(r.saldo)}'),
+                                  '${r.namaBank} — ${AppHelper.formatRupiah(r.saldo)}'),
                             ))
                         .toList(),
                     onChanged: (val) => setState(() {
-                      _rekening = val;
+                      _rekeningDipilih = val;
                       _errorMsg = null;
                     }),
                   ),
@@ -372,7 +415,7 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: _simpan,
+                onPressed: _isLoading ? null : _simpan,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1A6BFF),
                   foregroundColor: Colors.white,
@@ -380,11 +423,22 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
                       borderRadius: BorderRadius.circular(14)),
                   elevation: 2,
                 ),
-                child: Text(
-                  widget.editData != null ? 'Simpan Perubahan' : 'Simpan Transaksi',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold),
-                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text(
+                        widget.editData != null
+                            ? 'Simpan Perubahan'
+                            : 'Simpan Transaksi',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
               ),
             ),
           ],
@@ -396,8 +450,7 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
   Widget _buildLabel(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text,
-            style: const TextStyle(
-                fontWeight: FontWeight.w600, fontSize: 14)),
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
       );
 
   Widget _buildField({
@@ -422,16 +475,14 @@ class _TambahTransaksiScreenState extends State<TambahTransaksiScreen> {
       filled: true,
       fillColor: Colors.white,
       border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none),
+          borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide(color: Colors.grey.shade200),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide:
-            const BorderSide(color: Color(0xFF1A6BFF), width: 2),
+        borderSide: const BorderSide(color: Color(0xFF1A6BFF), width: 2),
       ),
     );
   }

@@ -1,7 +1,7 @@
 // lib/screens/login_screen.dart
 import 'package:flutter/material.dart';
-import '../models/app_data.dart';
-import 'dashboard_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_service.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -15,35 +15,55 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _showPass = false;
+  bool _isLoading = false;
   String? _errorMsg;
 
-  void _login() {
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
     final email = _emailCtrl.text.trim();
     final pass = _passCtrl.text.trim();
 
     if (email.isEmpty || pass.isEmpty) {
-      setState(() => _errorMsg = 'Email dan password wajib diisi!');
+      setState(() => _errorMsg = 'Email dan password wajib diisi.');
       return;
     }
 
-    final user = AppData.daftarUser.where(
-      (u) => u.email == email && u.password == pass,
-    ).toList();
+    setState(() {
+      _isLoading = true;
+      _errorMsg = null;
+    });
 
-    if (user.isEmpty) {
-      setState(() => _errorMsg = 'Email atau password salah!');
-      return;
+    try {
+      await FirebaseService.login(email, pass);
+      // AuthGate di main.dart akan otomatis mendeteksi login
+      // dan redirect ke DashboardScreen — tidak perlu Navigator manual
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        switch (e.code) {
+          case 'user-not-found':
+          case 'wrong-password':
+          case 'invalid-credential':
+            _errorMsg = 'Email atau password salah.';
+            break;
+          case 'invalid-email':
+            _errorMsg = 'Format email tidak valid.';
+            break;
+          case 'too-many-requests':
+            _errorMsg = 'Terlalu banyak percobaan. Coba lagi nanti.';
+            break;
+          default:
+            _errorMsg = 'Gagal masuk. Periksa koneksi internet.';
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-
-    AppData.namaUser = user.first.nama;
-    AppData.emailUser = email;
-    AppData.isLoggedIn = true;
-    AppData.initDefaultData();
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const DashboardScreen()),
-    );
   }
 
   @override
@@ -57,7 +77,8 @@ class _LoginScreenState extends State<LoginScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 48),
-              // Logo & Title
+
+              // Logo & judul
               Center(
                 child: Column(
                   children: [
@@ -68,8 +89,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         color: const Color(0xFF1A6BFF),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: const Icon(Icons.account_balance_wallet,
-                          color: Colors.white, size: 44),
+                      child: const Icon(
+                        Icons.account_balance_wallet,
+                        color: Colors.white,
+                        size: 44,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     const Text(
@@ -88,14 +112,19 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 48),
-              const Text('Masuk ke Akun',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('Kelola keuanganmu lebih mudah 💙',
-                  style: TextStyle(color: Colors.grey)),
+
+              const Text(
+                'Masuk ke Akun',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Kelola keuanganmu lebih mudah',
+                style: TextStyle(color: Colors.grey),
+              ),
               const SizedBox(height: 28),
 
-              // Error
+              // Pesan error
               if (_errorMsg != null)
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -110,13 +139,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       const Icon(Icons.error_outline,
                           color: Colors.red, size: 18),
                       const SizedBox(width: 8),
-                      Text(_errorMsg!,
-                          style: const TextStyle(color: Colors.red)),
+                      Expanded(
+                        child: Text(
+                          _errorMsg!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ),
                     ],
                   ),
                 ),
 
-              // Email
               _buildLabel('Email'),
               _buildTextField(
                 controller: _emailCtrl,
@@ -127,20 +159,23 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Password
               _buildLabel('Password'),
               TextField(
                 controller: _passCtrl,
                 obscureText: !_showPass,
                 onChanged: (_) => setState(() => _errorMsg = null),
+                onSubmitted: (_) => _login(),
                 decoration: InputDecoration(
-                  hintText: '••••••',
-                  prefixIcon:
-                      const Icon(Icons.lock_outline, color: Color(0xFF1A6BFF)),
+                  hintText: 'Masukkan password',
+                  prefixIcon: const Icon(
+                    Icons.lock_outline,
+                    color: Color(0xFF1A6BFF),
+                  ),
                   suffixIcon: IconButton(
                     icon: Icon(
-                        _showPass ? Icons.visibility_off : Icons.visibility,
-                        color: Colors.grey),
+                      _showPass ? Icons.visibility_off : Icons.visibility,
+                      color: Colors.grey,
+                    ),
                     onPressed: () => setState(() => _showPass = !_showPass),
                   ),
                   filled: true,
@@ -151,24 +186,22 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide:
-                        BorderSide(color: Colors.grey.shade200),
+                    borderSide: BorderSide(color: Colors.grey.shade200),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                        color: Color(0xFF1A6BFF), width: 2),
+                    borderSide:
+                        const BorderSide(color: Color(0xFF1A6BFF), width: 2),
                   ),
                 ),
               ),
               const SizedBox(height: 28),
 
-              // Tombol Login
               SizedBox(
                 width: double.infinity,
                 height: 52,
                 child: ElevatedButton(
-                  onPressed: _login,
+                  onPressed: _isLoading ? null : _login,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1A6BFF),
                     foregroundColor: Colors.white,
@@ -176,14 +209,24 @@ class _LoginScreenState extends State<LoginScreen> {
                         borderRadius: BorderRadius.circular(14)),
                     elevation: 2,
                   ),
-                  child: const Text('Masuk',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'Masuk',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
                 ),
               ),
               const SizedBox(height: 20),
 
-              // Register
               Center(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -209,7 +252,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Info demo
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -219,7 +261,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('🔑 Akun Demo:',
+                    Text('Akun Demo:',
                         style: TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 12)),
                     SizedBox(height: 4),
@@ -271,8 +313,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide:
-              const BorderSide(color: Color(0xFF1A6BFF), width: 2),
+          borderSide: const BorderSide(color: Color(0xFF1A6BFF), width: 2),
         ),
       ),
     );
