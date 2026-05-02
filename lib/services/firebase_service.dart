@@ -37,6 +37,11 @@ class FirebaseService {
       password: password.trim(),
     );
     await cred.user?.updateDisplayName(nama.trim());
+
+    // Paksa refresh token agar Firestore Security Rules
+    // langsung mengenali user baru — tanpa ini bisa PERMISSION_DENIED
+    await cred.user?.getIdToken(true);
+
     // Inisialisasi data default rekening untuk user baru
     await _initDefaultRekening(cred.user!.uid);
     return cred;
@@ -51,7 +56,7 @@ class FirebaseService {
   static Future<void> _initDefaultRekening(String uid) async {
     final col = _db.collection('users').doc(uid).collection('rekening');
     final snap = await col.limit(1).get();
-    if (snap.docs.isNotEmpty) return; // sudah ada data
+    if (snap.docs.isNotEmpty) return; // sudah ada data, skip
 
     final batch = _db.batch();
     batch.set(col.doc('r1'), {
@@ -115,8 +120,10 @@ class FirebaseService {
   }
 
   static Stream<List<TransaksiModel>> streamTransaksi() {
-    return _transaksiCol().orderBy('tanggal', descending: true).snapshots().map(
-        (snap) =>
+    return _transaksiCol()
+        .orderBy('tanggal', descending: true)
+        .snapshots()
+        .map((snap) =>
             snap.docs.map((d) => TransaksiModel.fromMap(d.data())).toList());
   }
 
